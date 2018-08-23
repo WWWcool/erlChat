@@ -31,9 +31,9 @@ terminate(_Reason, _LoopData) -> ok.
 handle_cast(stop, LoopData) -> {stop, normal, LoopData}.
 
 handle_call({try_to_connect, Params}, {From, _}, LoopData) ->
-        {Reply, NewLoopData} = chat_connect_user(LoopData, Params, From),
-        %io:format("NewLoopData - ~p~n",[NewLoopData]),
-        {reply, Reply, NewLoopData};
+    {Reply, NewLoopData} = chat_connect_user(LoopData, Params, From),
+    ?Print("NewLoopData - ~p~n",[NewLoopData]),
+    {reply, Reply, NewLoopData};
 
 handle_call(disconnect, {From, _}, LoopData) ->
     {Reply, NewLoopData} = chat_disconnect_user(LoopData, From),
@@ -69,46 +69,56 @@ handle_call({get_users_in_room, Room}, {_From, _}, LoopData) ->
 %% Server API
 
 try_to_connect(Params) ->
+    ?Print("connect to server with params ~p~n", [Params]),
     gen_server:call(?MODULE, {try_to_connect, Params}).
 
 disconnect() ->
+    ?Print("disconnect from server ~n", []),
     gen_server:call(?MODULE, disconnect).
 
 get_rooms() ->
+    ?Print("get rooms from server ~n", []),
     case gen_server:call(?MODULE, get_rooms) of
         {ok, List} -> List;
         _ -> {error, no_room}
     end.
 
 get_users_in_room(Room) ->
+    ?Print("get users from room ~p on server~n", [Room]),
     case gen_server:call(?MODULE, {get_users_in_room, Room}) of
         {ok, List} -> List;
         _ -> {error, badarg}
     end.
 
 goto_room(Room) ->
+    ?Print("change room on server to ~p~n", [Room]),
     gen_server:call(?MODULE, {goto_room, Room}).
 
 send_message(Message) ->
+    ?Print("send message to server ~p~n", [Message]),
     gen_server:call(?MODULE, {send_message, Message}).
 
 %% Utils
 
 chat_check_user([], _, _) -> false;
 chat_check_user([{users, UserList} | _], Val, N) ->
-    %io:format("UserList - ~p Val - ~p N - ~p~n",[UserList, Val, N]),
+    %?Print("UserList - ~p Val - ~p N - ~p~n",[UserList, Val, N]),
     %User = lists:nth(1, UserList),
-    %io:format("User - ~p N - ~p Element - ~p~n",[User, N, erlang:element(N,User)]),
+    %?Print("User - ~p N - ~p Element - ~p~n",[User, N, erlang:element(N,User)]),
     lists:keyfind(Val, N, UserList);
 chat_check_user([_ | Rest], Val, N) ->
     chat_check_user(Rest, Val, N).
 
 chat_connect_user(LoopData, Params, From) ->
-    case chat_check_user(LoopData, Params#user_init.name, #user.name) of
-        false ->
+    SameName = chat_check_user(LoopData, Params#user_init.name, #user.name),
+    %?Print("SameName - ~p~n", [SameName]),
+    SamePid = chat_check_user(LoopData, From, #user.pid),
+    %?Print("SamePid - ~p~n", [SamePid]),
+    case erlang:is_boolean(SameName) and erlang:is_boolean(SamePid) of
+        true ->
             chat_add_user(LoopData, Params, From);
         _ ->
-            {{error, name_already_used}, LoopData}
+            {{error, name_or_pid_used}, LoopData}
     end.
 
 chat_disconnect_user(LoopData, From) ->
@@ -128,8 +138,8 @@ chat_user_change_room(LoopData, From, Room) ->
                 User ->
                     NewUser = User#user{room = Room},
                     room_send_history(LoopData, NewUser),
-                    {ok, lists:keyreplace(users,1,LoopData,
-                                         {users, lists:keyreplace(NewUser#user.name, #user.name, UserList, NewUser)})}
+                    NewUserList = lists:keyreplace(NewUser#user.name, #user.name, UserList, NewUser),
+                    {ok, lists:keyreplace(users,1,LoopData, {users, NewUserList})}
             end;
         _ ->
             {{error, users_not_found}, LoopData}
@@ -159,18 +169,6 @@ chat_delete_user(LoopData, Name) ->
             {{error, users_not_found}, LoopData}
     end.
 
-%chat_update_user(UserList, Name, Val, N) ->
-%    case lists:keyfind(Name, #user.name, UserList) of
-%        false ->
-%            UserList;
-%        User ->
-%            NewUser = erlang:setelement(N, User, Val),
-%            chat_update_user(UserList, NewUser)
-%    end.
-%
-%chat_update_user(UserList, NewUser) ->
-%            lists:keyreplace(NewUser#user.name, #user.name, UserList, NewUser).
-
 chat_update_room(RoomList, Name, Val, N) ->
     case lists:keyfind(Name, #rm.name, RoomList) of
         false ->
@@ -188,6 +186,13 @@ chat_new_message(LoopData, From, Message) ->
             room_new_message(LoopData, User, Message)
     end.
 
+room_append_message(Room, Message) ->
+    case [Message | Room#rm.msgBuffer] of
+        List when erlang:length(List) > 10 ->
+            lists:droplast(List);
+        List -> List
+    end.
+
 room_new_message(LoopData, User, Message) ->
     case lists:keyfind(rooms,1,LoopData) of
         {rooms, RoomList} ->
@@ -197,26 +202,14 @@ room_new_message(LoopData, User, Message) ->
                     false ->
                         RoomList;
                     Room ->
-                        NewBuffer = [Message | Room#rm.msgBuffer],
-                        case erlang:length(NewBuffer) of
-                            Len when Len > 10 ->
-                                chat_update_room(RoomList, UserRoom,
-                                                 lists:droplast(NewBuffer), #rm.msgBuffer);
-                            _ ->
-                                chat_update_room(RoomList, UserRoom, NewBuffer, #rm.msgBuffer)
-                        end
+                        chat_update_room(RoomList, UserRoom,
+                            room_append_message(Room, Message), #rm.msgBuffer)
                 end,
             case lists:keyfind(users,1,LoopData) of
                 {users, UserList} ->
                     lists:foreach(
-                        fun(#user{module=Module,send_cb=Callback} = X)
-                            when X#user.room == UserRoom ->
-                                case {Module,Callback} of
-                                    {undefined, _} -> ok;
-                                    {_, undefined} -> ok;
-                                    _ ->
-                                        Module:Callback(Message)
-                                end
+                        fun(SomeUser) when SomeUser#user.room == UserRoom ->
+                                send_back_to_user(SomeUser,Message)
                         end,
                         UserList);
                 _ -> ok
@@ -232,20 +225,24 @@ room_send_history(LoopData, User) ->
     case lists:keyfind(rooms,1,LoopData) of
         {rooms, RoomList} ->
             case lists:keyfind(UserRoom, #rm.name, RoomList) of
-                    false ->
-                        RoomList;
-                    Room ->
-                        #user{module=Module,send_cb=Callback} = User,
-                        lists:foreach(
-                            fun(Message) ->
-                                    Module:Callback(Message)
-                            end,
-                        Room#rm.msgBuffer)
+                false ->
+                    RoomList;
+                Room ->
+                    lists:foreach(
+                        fun(Message) ->
+                            send_back_to_user(User, Message)
+                        end,
+                    Room#rm.msgBuffer)
             end;
         _ -> ok
     end.
 
-
+send_back_to_user(#user{module=Module,send_cb=Callback} = _User, Message) ->
+    try Module:Callback(Message) of
+        _ -> ok
+    catch
+        _:_ -> ?Print("User - ~p send callback error~n",[_User])
+    end.
 
 
 
