@@ -32,7 +32,7 @@ handle_cast(stop, LoopData) -> {stop, normal, LoopData}.
 
 handle_call({try_to_connect, Params}, {From, _}, LoopData) ->
     {Reply, NewLoopData} = chat_connect_user(LoopData, Params, From),
-    ?Print("NewLoopData - ~p~n",[NewLoopData]),
+    ?Print("NewLoopData - ~p~n",[NewLoopData], #en_trace_level.trace),
     {reply, Reply, NewLoopData};
 
 handle_call(disconnect, {From, _}, LoopData) ->
@@ -69,33 +69,33 @@ handle_call({get_users_in_room, Room}, {_From, _}, LoopData) ->
 %% Server API
 
 try_to_connect(Params) ->
-    ?Print("connect to server with params ~p~n", [Params]),
+    ?Print("connect to server with params ~p~n", [Params], #en_trace_level.trace),
     gen_server:call(?MODULE, {try_to_connect, Params}).
 
 disconnect() ->
-    ?Print("disconnect from server ~n", []),
+    ?Print("disconnect from server ~n", [], #en_trace_level.trace),
     gen_server:call(?MODULE, disconnect).
 
 get_rooms() ->
-    ?Print("get rooms from server ~n", []),
+    ?Print("get rooms from server ~n", [], #en_trace_level.trace),
     case gen_server:call(?MODULE, get_rooms) of
         {ok, List} -> List;
         _ -> {error, no_room}
     end.
 
 get_users_in_room(Room) ->
-    ?Print("get users from room ~p on server~n", [Room]),
+    ?Print("get users from room ~p on server~n", [Room], #en_trace_level.trace),
     case gen_server:call(?MODULE, {get_users_in_room, Room}) of
         {ok, List} -> List;
         _ -> {error, badarg}
     end.
 
 goto_room(Room) ->
-    ?Print("change room on server to ~p~n", [Room]),
+    ?Print("change room on server to ~p~n", [Room], #en_trace_level.trace),
     gen_server:call(?MODULE, {goto_room, Room}).
 
 send_message(Message) ->
-    ?Print("send message to server ~p~n", [Message]),
+    ?Print("send message to server ~p~n", [Message], #en_trace_level.trace),
     gen_server:call(?MODULE, {send_message, Message}).
 
 %% Utils
@@ -207,6 +207,7 @@ room_new_message(LoopData, User, Message) ->
                 end,
             case lists:keyfind(users,1,LoopData) of
                 {users, UserList} ->
+
                     lists:foreach(
                         fun(SomeUser) when SomeUser#user.room == UserRoom ->
                                 send_back_to_user(SomeUser,Message)
@@ -241,7 +242,7 @@ send_back_to_user(#user{module=Module,send_cb=Callback} = _User, Message) ->
     try Module:Callback(Message) of
         _ -> ok
     catch
-        _:_ -> ?Print("User - ~p send callback error~n",[_User])
+        _:_ -> ?Print("User - ~p send callback error~n",[_User], #en_trace_level.debug)
     end.
 
 

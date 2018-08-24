@@ -41,7 +41,7 @@ handle_call({connect, {Server, Name}}, {_From, _}, LoopData) ->
             error_handler({server_error, Replay}, LoopData);
         _ ->
             ServerReplay = Server:get_rooms(),
-            ?Print("ServerReplay = ~p~n",[ServerReplay]),
+            ?Print("ServerReplay = ~p~n",[ServerReplay], #en_trace_level.debug),
             case ServerReplay of
             %case Server:get_rooms() of
                 {error, Replay} -> error_handler({server_error, Replay}, LoopData);
@@ -110,7 +110,7 @@ message_append(LoopData, Message) ->
     LoopData#cl_context{msgBuffer = NewList}.
 
 error_handler(Error, LoopData) ->
-    ?Print("Error - ~p~n",[Error]),
+    ?Print("Error - ~p~n",[Error], #en_trace_level.debug),
     {NewReplay, NewLoopData} = case Error of
         {server_error, _} -> {Error, LoopData};
         {error, Error} -> {{error, Error}, init_client()}
