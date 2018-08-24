@@ -17,7 +17,7 @@
 
 -ifdef(DEBUG).
     -define(Print(Message, Args, Level),
-        case Level =< ?debug of
+        case Level =< ?DEBUG of
             true -> io:format(Message, Args);
             _ -> ok
         end).
