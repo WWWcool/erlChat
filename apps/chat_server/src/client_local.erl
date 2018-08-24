@@ -10,9 +10,14 @@
 -export([init/1, terminate/2, handle_call/3, handle_cast/2]).
 
 -behavior(gen_server).
--include("chat.hrl").
 
 -define(EMPTY, "Empty").
+
+-record(cl_context, {server = undefined, name, state, msgBuffer = []}).
+-record(en_cl_states, {offline, online}).
+-record(user_init, {name, module, send_cb}).
+
+-type connect_params() :: server:connect_params().
 
 %% Exported Client Functions %% Operation & Maintenance API
 start_link() ->
@@ -24,62 +29,62 @@ stop() -> gen_server:cast(?MODULE, stop).
 init(_) ->
     {ok, init_client()}.
 
-terminate(_Reason, _LoopData) -> ok.
+terminate(_Reason, _State) -> ok.
 
-handle_cast(stop, LoopData) -> {stop, normal, LoopData};
-handle_cast(_, #cl_context{state = #en_cl_states.offline} = LoopData) ->
-    {noreply, LoopData};
-handle_cast({send_cb, Message}, LoopData) ->
+handle_cast(stop, State) -> {stop, normal, State};
+handle_cast(_, #cl_context{state = #en_cl_states.offline} = State) ->
+    {noreply, State};
+handle_cast({send_cb, Message}, State) ->
     io:format("Receive message - ~p~n",[Message]),
-    {noreply, message_append(LoopData, Message)}.
+    {noreply, message_append(State, Message)}.
 
-handle_call({connect, {Server, Name}}, {_From, _}, LoopData) ->
+handle_call({connect, {Server, Name}}, {_From, _}, State) ->
     try Server:try_to_connect(#user_init{   name = Name,
                                             module = ?MODULE,
                                             send_cb = send_cb}) of
         {error, Replay} ->
-            error_handler({server_error, Replay}, LoopData);
+            error_handler({server_error, Replay}, State);
         _ ->
             ServerReplay = Server:get_rooms(),
-            ?Print("ServerReplay = ~p~n",[ServerReplay], #en_trace_level.debug),
+            %?Print("ServerReplay = ~p~n",[ServerReplay], #en_trace_level.debug),
             case ServerReplay of
             %case Server:get_rooms() of
-                {error, Replay} -> error_handler({server_error, Replay}, LoopData);
+                {error, Replay} -> error_handler({server_error, Replay}, State);
                 _ ->
-                    NewLoopData = LoopData#cl_context{  name = Name,
+                    NewState = State#cl_context{  name = Name,
                                                         server = Server,
                                                         state = #en_cl_states.online},
-                    {reply, ok, NewLoopData}
+                    {reply, ok, NewState}
             end
     catch
-        error:Error -> error_handler({error, Error}, LoopData)
+        error:Error -> error_handler({error, Error}, State)
     end;
 
-handle_call(_, _, #cl_context{state = #en_cl_states.offline} = LoopData) ->
-    {reply, {error, not_connected}, LoopData};
+handle_call(_, _, #cl_context{state = #en_cl_states.offline} = State) ->
+    {reply, {error, not_connected}, State};
 
-handle_call(disconnect, {_From, _}, LoopData) ->
-    try (LoopData#cl_context.server):disconnect() of
-        {error, Replay} -> error_handler({server_error, Replay}, LoopData);
+handle_call(disconnect, {_From, _}, State) ->
+    try (State#cl_context.server):disconnect() of
+        {error, Replay} -> error_handler({server_error, Replay}, State);
         _ -> {reply, ok, init_client()}
     catch
-        error:Error -> error_handler({error, Error}, LoopData)
+        error:Error -> error_handler({error, Error}, State)
     end;
 
-handle_call({select_room, Room}, {_From, _}, LoopData) ->
-    try (LoopData#cl_context.server):goto_room(Room) of
-        {error, Replay} -> error_handler({server_error, Replay}, LoopData);
-        _ -> {reply, ok, LoopData}
+handle_call({select_room, Room}, {_From, _}, State) ->
+    try (State#cl_context.server):goto_room(Room) of
+        {error, Replay} -> error_handler({server_error, Replay}, State);
+        _ -> {reply, ok, State}
     catch
-        error:Error -> error_handler({error, Error}, LoopData)
+        error:Error -> error_handler({error, Error}, State)
     end;
 
-handle_call({send_message, Message}, {_From, _}, LoopData) ->
-    try (LoopData#cl_context.server):send_message(Message) of
-        {error, Replay} -> error_handler({server_error, Replay}, LoopData);
-        _ -> {reply, ok, LoopData}
+handle_call({send_message, Message}, {_From, _}, State) ->
+    try (State#cl_context.server):send_message(Message) of
+        {error, Replay} -> error_handler({server_error, Replay}, State);
+        _ -> {reply, ok, State}
     catch
-        error:Error -> error_handler({error, Error}, LoopData)
+        error:Error -> error_handler({error, Error}, State)
     end.
 
 %% Client API
@@ -101,21 +106,21 @@ send_message(Message) ->
 %% Utils
 init_client() -> #cl_context{name = ?EMPTY, state = #en_cl_states.offline}.
 
-message_append(LoopData, Message) ->
-    NewList = case [Message | LoopData#cl_context.msgBuffer] of
+message_append(State, Message) ->
+    NewList = case [Message | State#cl_context.msgBuffer] of
         List when length(List) > 10 ->
             lists:droplast(List);
         List -> List
     end,
-    LoopData#cl_context{msgBuffer = NewList}.
+    State#cl_context{msgBuffer = NewList}.
 
-error_handler(Error, LoopData) ->
-    ?Print("Error - ~p~n",[Error], #en_trace_level.debug),
-    {NewReplay, NewLoopData} = case Error of
-        {server_error, _} -> {Error, LoopData};
+error_handler(Error, State) ->
+    %?Print("Error - ~p~n",[Error], #en_trace_level.debug),
+    {NewReplay, NewState} = case Error of
+        {server_error, _} -> {Error, State};
         {error, Error} -> {{error, Error}, init_client()}
     end,
-    {reply, NewReplay, NewLoopData}.
+    {reply, NewReplay, NewState}.
 
 
 
