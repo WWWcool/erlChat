@@ -6,6 +6,7 @@
 -export([goto_room/1]).
 -export([send_message/1]).
 -export([get_users_in_room/1]).
+-export([new_connect_data/3]).
 
 -export([start_link/0, stop/0]).
 -export([init/1, terminate/2, handle_call/3, handle_cast/2]).
@@ -14,22 +15,55 @@
 
 -define(LOBBY, "Lobby").
 
--record(rm, {name :: string(), msgBuffer = [] :: list()}).
+-record(rm, {name :: string(), msg_buffer = [] :: list()}).
 -record(user_init, {name :: string(), module :: module(), send_cb :: atom()}).
 -record(user, {name :: string(), room :: string(), pid :: pid(), module :: module(), send_cb :: atom()}).
 -record(srv_context, {rooms = [] :: list(), users = [] :: list()}).
 
 -type state() :: #srv_context{}.
--type connect_params() :: #user_init{}.
+-type connect_data() :: #user_init{}.
 -type rm_params() :: #rm{}.
 -type user_params() :: #user{}.
 
--export_type([connect_params/0]).
-%% Exported Client Functions %% Operation & Maintenance API
+%% Server API
+-spec try_to_connect(connect_data()) -> {ok, connected} | {error, atom()}.
+try_to_connect(Params) ->
+    %?Print("connect to server with params ~p~n", [Params], #en_trace_level.trace),
+    gen_server:call(?MODULE, {try_to_connect, Params}).
 
+-spec disconnect() -> {ok, disconnected} | {error, atom()}.
+disconnect() ->
+    %?Print("disconnect from server ~n", [], #en_trace_level.trace),
+    gen_server:call(?MODULE, disconnect).
+
+-spec get_rooms() -> {ok, list()}.
+get_rooms() ->
+    gen_server:call(?MODULE, get_rooms).
+
+-spec get_users_in_room(string()) -> {ok, list()}.
+get_users_in_room(Room) ->
+    gen_server:call(?MODULE, {get_users_in_room, Room}).
+
+-spec goto_room(string()) -> {ok, string()} | {error, atom()}.
+goto_room(Room) ->
+    %?Print("change room on server to ~p~n", [Room], #en_trace_level.trace),
+    gen_server:call(?MODULE, {goto_room, Room}).
+
+-spec send_message(string()) -> {ok, sended} | {error, atom()}.
+send_message(Message) ->
+    %?Print("send message to server ~p~n", [Message], #en_trace_level.trace),
+    gen_server:call(?MODULE, {send_message, Message}).
+
+-spec new_connect_data(string(), module(), atom()) -> connect_data().
+new_connect_data(Name, Module, Send_cb) ->
+    #user_init{name = Name, module = Module, send_cb = Send_cb}.
+
+%% Exported Client Functions %% Operation & Maintenance API
+-spec start_link() -> 'ignore' | {'error',_} | {'ok',pid()}.
 start_link() ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
+-spec stop() -> ok.
 stop() -> gen_server:cast(?MODULE, stop).
 
 %% Callback Functions
@@ -48,10 +82,8 @@ handle_cast(stop, State) -> {stop, normal, State}.
                     {'get_users_in_room', _} |
                     {'goto_room', string()} |
                     {'send_message', string()} |
-                    {'try_to_connect', #user_init{}},
-                    {_, _}, #srv_context{}) -> {'reply','ok' |
-                                                        {'error', _} |
-                                                        {'ok', _}, #srv_context{}}.
+                    {'try_to_connect', connect_data()},
+                    {_, _}, state()) -> {'reply',{'error' | ok, _}, state()}.
 handle_call({try_to_connect, Params}, {From, _}, State) ->
     {Reply, NewState} = chat_connect_user(Params, From, State),
     %?Print("NewState - ~p~n",[NewState], #en_trace_level.trace),
@@ -77,45 +109,8 @@ handle_call({get_users_in_room, Room}, {_From, _}, #srv_context{users = UserList
                 OldRoom == Room end,UserList)},
     {reply, Reply, State}.
 
-%% Server API
--spec try_to_connect(connect_params()) -> ok | {error, atom()}.
-try_to_connect(Params) ->
-    %?Print("connect to server with params ~p~n", [Params], #en_trace_level.trace),
-    gen_server:call(?MODULE, {try_to_connect, Params}).
-
--spec disconnect() -> ok | {error, atom()}.
-disconnect() ->
-    %?Print("disconnect from server ~n", [], #en_trace_level.trace),
-    gen_server:call(?MODULE, disconnect).
-
--spec get_rooms() -> list() | {error, atom()}.
-get_rooms() ->
-    %?Print("get rooms from server ~n", [], #en_trace_level.trace),
-    case gen_server:call(?MODULE, get_rooms) of
-        {ok, List} -> List;
-        _ -> {error, no_room}
-    end.
-
--spec get_users_in_room(string()) -> list() | {error, atom()}.
-get_users_in_room(Room) ->
-    %?Print("get users from room ~p on server~n", [Room], #en_trace_level.trace),
-    case gen_server:call(?MODULE, {get_users_in_room, Room}) of
-        {ok, List} -> List;
-        _ -> {error, badarg}
-    end.
-
--spec goto_room(string()) -> ok | {error, atom()}.
-goto_room(Room) ->
-    %?Print("change room on server to ~p~n", [Room], #en_trace_level.trace),
-    gen_server:call(?MODULE, {goto_room, Room}).
-
--spec send_message(string()) -> ok | {error, atom()}.
-send_message(Message) ->
-    %?Print("send message to server ~p~n", [Message], #en_trace_level.trace),
-    gen_server:call(?MODULE, {send_message, Message}).
-
 %% Utils
--spec chat_connect_user(connect_params(), pid(), state()) -> {ok, state()} | {{error, term()}, state()}.
+-spec chat_connect_user(connect_data(), pid(), state()) -> {{ok, connected}, state()} | {{error, term()}, state()}.
 chat_connect_user(#user_init{name = Name} = Params, From, State) ->
     case [User || User <- State#srv_context.users,
             (User#user.name == Name) and (User#user.pid == From)] of
@@ -125,7 +120,7 @@ chat_connect_user(#user_init{name = Name} = Params, From, State) ->
             {{error, name_or_pid_used}, State}
     end.
 
--spec chat_disconnect_user(pid(), state()) -> {ok, state()} | {{error, term()}, state()}.
+-spec chat_disconnect_user(pid(), state()) -> {{ok, disconnected}, state()} | {{error, term()}, state()}.
 chat_disconnect_user(From, #srv_context{users = UserList} = State) ->
     case lists:keyfind(From, #user.pid, UserList)of
         false ->
@@ -134,33 +129,37 @@ chat_disconnect_user(From, #srv_context{users = UserList} = State) ->
             chat_delete_user(User#user.name, State)
     end.
 
--spec chat_user_change_room(pid(), string(), state()) -> {ok, state()} | {{error, term()}, state()}.
+-spec chat_user_change_room(pid(), string(), state()) -> {{ok, string()}, state()} | {{error, term()}, state()}.
 chat_user_change_room(From, Room, #srv_context{users = UserList} = State) ->
     case lists:keyfind(From, #user.pid, UserList) of
         false ->
             {{error, user_not_exist}, State};
         User ->
             NewUser = User#user{room = Room},
+            % some handle of res
             room_send_history(NewUser, State),
             NewUserList = lists:keyreplace(NewUser#user.name, #user.name, UserList, NewUser),
-            {ok, State#srv_context{users = NewUserList}}
+            {{ok, Room}, State#srv_context{users = NewUserList}}
     end.
 
--spec chat_add_user(connect_params(), pid(), state()) -> {ok, state()}.
+-spec chat_add_user(connect_data(), pid(), state()) -> {{ok, connected}, state()}.
 chat_add_user(Params, From, #srv_context{users = UserList} = State) ->
     NewUser = #user{name    = Params#user_init.name,
                     room    = ?LOBBY,
                     pid     = From,
                     module  = Params#user_init.module,
                     send_cb = Params#user_init.send_cb},
+    % add monitor
+    % some handle of res
     room_send_history(NewUser, State),
-    {ok, State#srv_context{users = [NewUser | UserList]}}.
+    {{ok, connected}, State#srv_context{users = [NewUser | UserList]}}.
 
--spec chat_delete_user(string(), state()) -> {ok, state()}.
+-spec chat_delete_user(string(), state()) -> {{ok, disconnected}, state()}.
 chat_delete_user(Name, #srv_context{users = UserList} = State) ->
-    {ok, State#srv_context{users = lists:keydelete(Name, #user.name, UserList)}}.
+    % delete monitor
+    {{ok, disconnected}, State#srv_context{users = lists:keydelete(Name, #user.name, UserList)}}.
 
--spec chat_new_message(pid(), string(), state()) -> {ok, state()} | {{error, term()}, state()}.
+-spec chat_new_message(pid(), string(), state()) -> {{ok, sended}, state()} | {{error, term()}, state()}.
 chat_new_message(From, Message, #srv_context{users = UserList} = State) ->
     case lists:keyfind(From, #user.pid, UserList) of
         false ->
@@ -171,14 +170,14 @@ chat_new_message(From, Message, #srv_context{users = UserList} = State) ->
 
 -spec room_append_message(rm_params(), string()) -> rm_params().
 room_append_message(Room, Message) ->
-    NewBuf = case [Message | Room#rm.msgBuffer] of
+    NewBuf = case [Message | Room#rm.msg_buffer] of
         List when erlang:length(List) > 10 ->
             lists:droplast(List);
         List -> List
     end,
-    Room#rm{msgBuffer = NewBuf}.
+    Room#rm{msg_buffer = NewBuf}.
 
--spec room_new_message(user_params(), string(), state()) -> {ok, state()}.
+-spec room_new_message(user_params(), string(), state()) -> {{ok, sended}, state()}.
 room_new_message(User, Message, #srv_context{rooms = RoomList, users = UserList} = State) ->
     UserRoom = User#user.room,
     NewRoomList =
@@ -194,9 +193,9 @@ room_new_message(User, Message, #srv_context{rooms = RoomList, users = UserList}
                 send_back_to_user(SomeUser,Message)
         end,
         UserList),
-    {ok, State#srv_context{rooms = NewRoomList}}.
+    {{ok, sended}, State#srv_context{rooms = NewRoomList}}.
 
--spec room_send_history(user_params(), state()) -> ok | {error, term()}.
+-spec room_send_history(user_params(), state()) -> {ok, sended} | {error, term()}.
 room_send_history(User, #srv_context{rooms = RoomList}) ->
     UserRoom = User#user.room,
     case lists:keyfind(UserRoom, #rm.name, RoomList) of
@@ -204,14 +203,14 @@ room_send_history(User, #srv_context{rooms = RoomList}) ->
             {error, room_not_exist};
         Room ->
             ResendFunc = fun(Message) -> send_back_to_user(User, Message) end,
-            lists:foreach(ResendFunc, Room#rm.msgBuffer),
-            ok
+            lists:foreach(ResendFunc, Room#rm.msg_buffer),
+            {ok, sended}
     end.
 
--spec send_back_to_user(user_params(), string()) -> ok | {error, term()}.
+-spec send_back_to_user(user_params(), string()) -> {ok, sended} | {error, term()}.
 send_back_to_user(#user{module=Module,send_cb=Callback} = _User, Message) ->
     try Module:Callback(Message) of
-        _ -> ok
+        _ -> {ok, sended}
     catch
         _:Replay ->
             %?Print("User - ~p send callback error - ~p~n",[User, Replay], #en_trace_level.debug),

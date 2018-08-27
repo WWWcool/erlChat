@@ -19,6 +19,7 @@
 %% API functions
 %%====================================================================
 
+-spec start_link() -> 'ignore' | {'error',_} | {'ok',pid()}.
 start_link() ->
     supervisor:start_link({local, ?SERVER}, ?MODULE, []).
 
@@ -30,6 +31,7 @@ start_link() ->
 %% Optional keys are restart, shutdown, type, modules.
 %% Before OTP 18 tuples must be used to specify a child. e.g.
 %% Child :: {Id,StartFunc,Restart,Shutdown,Type,Modules}
+-spec init(list()) -> {'ok',{{'one_for_all',0,1},[]}}.
 init([]) ->
     {ok, { {one_for_all, 0, 1}, []} }.
 
