@@ -75,7 +75,9 @@ handle_cast({send_cb, Message}, State) ->
 handle_call({connect, Name}, {_From, _}, State) ->
     try server:try_to_connect(server:new_connect_data(Name, ?MODULE, send_cb)) of
         {error, Replay} ->
-            error_handler({server_error, Replay}, State);
+            %Str = error_handler({server_error, Replay}, State),
+            %logger:alert("our error result - ~p  and our state - ~p", [Str, State]),
+            {reply, {error, Replay}, State};
         _ ->
             %add monitor
             NewState = State#cl_context{    name = Name,

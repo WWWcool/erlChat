@@ -33,7 +33,11 @@ start_link() ->
 %% Child :: {Id,StartFunc,Restart,Shutdown,Type,Modules}
 -spec init(list()) -> {'ok',{{'one_for_all',0,1},[]}}.
 init([]) ->
-    {ok, { {one_for_all, 0, 1}, []} }.
+    SrvChild = {server, {server, start_link, []},
+                permanent, 2000, worker, [server]},
+    ClientChild = {client_local, {client_local, start_link, []},
+                permanent, 2000, worker, [client_local]},
+    {ok, { {one_for_one, 0, 1}, [SrvChild, ClientChild]} }.
 
 %%====================================================================
 %% Internal functions
